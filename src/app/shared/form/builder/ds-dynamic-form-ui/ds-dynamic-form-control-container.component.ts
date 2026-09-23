@@ -1,0 +1,677 @@
+import {
+  AsyncPipe,
+  isPlatformBrowser,
+  NgClass,
+  NgTemplateOutlet,
+} from '@angular/common';
+import {
+  AfterViewInit,
+  ChangeDetectionStrategy,
+  ChangeDetectorRef,
+  Component,
+  ComponentFactoryResolver,
+  ContentChildren,
+  DoCheck,
+  EventEmitter,
+  Inject,
+  inject,
+  Input,
+  OnChanges,
+  OnDestroy,
+  OnInit,
+  Output,
+  PLATFORM_ID,
+  QueryList,
+  Renderer2,
+  SimpleChanges,
+  Type,
+  ViewChild,
+  ViewContainerRef,
+} from '@angular/core';
+import {
+  AbstractControl,
+  FormsModule,
+  ReactiveFormsModule,
+  UntypedFormArray,
+  UntypedFormGroup,
+} from '@angular/forms';
+import {
+  APP_CONFIG,
+  AppConfig,
+} from '@dspace/config/app-config.interface';
+import { PaginatedList } from '@dspace/core/data/paginated-list.model';
+import { RelationshipDataService } from '@dspace/core/data/relationship-data.service';
+import { RemoteData } from '@dspace/core/data/remote-data';
+import { MetadataService } from '@dspace/core/metadata/metadata.service';
+import { Collection } from '@dspace/core/shared/collection.model';
+import { DSpaceObject } from '@dspace/core/shared/dspace-object.model';
+import { followLink } from '@dspace/core/shared/follow-link-config.model';
+import { FormFieldMetadataValueObject } from '@dspace/core/shared/form/models/form-field-metadata-value.model';
+import { Item } from '@dspace/core/shared/item.model';
+import { Relationship } from '@dspace/core/shared/item-relationships/relationship.model';
+import { ReorderableRelationship } from '@dspace/core/shared/item-relationships/reorderable-relationship';
+import {
+  MetadataValue,
+  VIRTUAL_METADATA_PREFIX,
+} from '@dspace/core/shared/metadata.models';
+import { ItemSearchResult } from '@dspace/core/shared/object-collection/item-search-result.model';
+import {
+  getAllSucceededRemoteData,
+  getFirstSucceededRemoteData,
+  getFirstSucceededRemoteDataPayload,
+  getPaginatedListPayload,
+  getRemoteDataPayload,
+} from '@dspace/core/shared/operators';
+import { RelationshipOptions } from '@dspace/core/shared/relationship-options.model';
+import { SearchResult } from '@dspace/core/shared/search/models/search-result.model';
+import { SubmissionObject } from '@dspace/core/submission/models/submission-object.model';
+import { SUBMISSION_LINKS_TO_FOLLOW } from '@dspace/core/submission/resolver/submission-links-to-follow';
+import { paginatedRelationsToItems } from '@dspace/core/utilities/item-relationships-utils';
+import { itemLinksToFollow } from '@dspace/core/utilities/relation-query.utils';
+import {
+  hasNoValue,
+  hasValue,
+  isNotEmpty,
+  isNotUndefined,
+} from '@dspace/shared/utils/empty.util';
+import {
+  NgbModal,
+  NgbModalRef,
+  NgbTooltip,
+} from '@ng-bootstrap/ng-bootstrap';
+import {
+  DYNAMIC_FORM_CONTROL_MAP_FN,
+  DYNAMIC_FORM_CONTROL_TYPE_CHECKBOX,
+  DynamicFormArrayComponent,
+  DynamicFormArrayGroupModel,
+  DynamicFormArrayModel,
+  DynamicFormComponentService,
+  DynamicFormControl,
+  DynamicFormControlComponent,
+  DynamicFormControlContainerComponent,
+  DynamicFormControlEvent,
+  DynamicFormControlEventType,
+  DynamicFormControlMapFn,
+  DynamicFormControlModel,
+  DynamicFormLayout,
+  DynamicFormLayoutService,
+  DynamicFormRelationService,
+  DynamicFormValidationService,
+  DynamicTemplateDirective,
+} from '@ng-dynamic-forms/core';
+import {
+  Actions,
+  ofType,
+} from '@ngrx/effects';
+import { Store } from '@ngrx/store';
+import {
+  TranslateModule,
+  TranslateService,
+} from '@ngx-translate/core';
+import {
+  combineLatest as observableCombineLatest,
+  Observable,
+  Subscription,
+} from 'rxjs';
+import {
+  find,
+  map,
+  startWith,
+  switchMap,
+  take,
+} from 'rxjs/operators';
+
+import { AppState } from '../../../../app.reducer';
+import { EditMetadataSecurityComponent } from '../../../../item-page/edit-item-page/edit-metadata-security/edit-metadata-security.component';
+import { SubmissionObjectActionTypes } from '../../../../submission/objects/submission-objects.actions';
+import { SubmissionService } from '../../../../submission/submission.service';
+import { SubmissionObjectService } from '../../../../submission/submission-object.service';
+import { LiveRegionService } from '../../../live-region/live-region.service';
+import { SelectableListState } from '../../../object-list/selectable-list/selectable-list.reducer';
+import { SelectableListService } from '../../../object-list/selectable-list/selectable-list.service';
+import { FormBuilderService } from '../form-builder.service';
+import { DsDynamicTypeBindRelationService } from './ds-dynamic-type-bind-relation.service';
+import { ExistingMetadataListElementComponent } from './existing-metadata-list-element/existing-metadata-list-element.component';
+import { ExistingRelationListElementComponent } from './existing-relation-list-element/existing-relation-list-element.component';
+import { DYNAMIC_FORM_CONTROL_TYPE_CUSTOM_SWITCH } from './models/custom-switch/custom-switch.model';
+import { DYNAMIC_FORM_CONTROL_TYPE_DSDATEPICKER } from './models/date-picker/date-picker.model';
+import { DynamicConcatModel } from './models/ds-dynamic-concat.model';
+import { DsDynamicLookupRelationModalComponent } from './relation-lookup-modal/dynamic-lookup-relation-modal.component';
+import { NameVariantService } from './relation-lookup-modal/name-variant.service';
+
+@Component({
+  selector: 'ds-dynamic-form-control-container',
+  styleUrls: ['./ds-dynamic-form-control-container.component.scss'],
+  templateUrl: './ds-dynamic-form-control-container.component.html',
+  changeDetection: ChangeDetectionStrategy.Default,
+  imports: [
+    AsyncPipe,
+    EditMetadataSecurityComponent,
+    ExistingMetadataListElementComponent,
+    ExistingRelationListElementComponent,
+    FormsModule,
+    NgbTooltip,
+    NgClass,
+    NgTemplateOutlet,
+    ReactiveFormsModule,
+    TranslateModule,
+  ],
+})
+export class DsDynamicFormControlContainerComponent extends DynamicFormControlContainerComponent
+  implements OnInit, OnChanges, OnDestroy, AfterViewInit, DoCheck {
+  @ContentChildren(DynamicTemplateDirective) contentTemplateList: QueryList<DynamicTemplateDirective>;
+  // eslint-disable-next-line @angular-eslint/no-input-rename
+  @Input('templates') inputTemplateList: QueryList<DynamicTemplateDirective>;
+  @Input() hasMetadataModel: any;
+  @Input() formId: string;
+  @Input() formGroup: UntypedFormGroup;
+  @Input() formModel: DynamicFormControlModel[];
+  @Input() asBootstrapFormGroup = false;
+  @Input() bindId = true;
+  @Input() context: any = null;
+  @Input() group: UntypedFormGroup;
+  @Input() hostClass: string[];
+  @Input() hasErrorMessaging = false;
+  @Input() layout = null as DynamicFormLayout;
+  @Input() model: any;
+  securityLevel: number;
+  relationshipValue$: Observable<ReorderableRelationship>;
+  isRelationship: boolean;
+  modalRef: NgbModalRef;
+  item: Item;
+  item$: Observable<Item>;
+  collection: Collection;
+  listId: string;
+  searchConfig: string;
+  value: MetadataValue;
+  /**
+   * List of subscriptions to unsubscribe from
+   */
+  private subs: Subscription[] = [];
+
+  private liveRegionErrorMessagesShownAlready = false;
+
+  /* eslint-disable @angular-eslint/no-output-rename */
+  @Output('dfBlur') blur: EventEmitter<DynamicFormControlEvent> = new EventEmitter<DynamicFormControlEvent>();
+  @Output('dfChange') change: EventEmitter<DynamicFormControlEvent> = new EventEmitter<DynamicFormControlEvent>();
+  @Output('dfFocus') focus: EventEmitter<DynamicFormControlEvent> = new EventEmitter<DynamicFormControlEvent>();
+  @Output('ngbEvent') customEvent: EventEmitter<DynamicFormControlEvent> = new EventEmitter<DynamicFormControlEvent>();
+  /* eslint-enable @angular-eslint/no-output-rename */
+  @ViewChild('componentViewContainer', { read: ViewContainerRef, static: true }) componentViewContainerRef: ViewContainerRef;
+
+  private showErrorMessagesPreviousStage: boolean;
+
+  /**
+   * Determines whether to request embedded thumbnail.
+   */
+  fetchThumbnail: boolean;
+
+  get componentType(): Type<DynamicFormControl> | null {
+    return this.dynamicFormControlFn(this.model);
+  }
+
+  private readonly liveRegionService = inject(LiveRegionService);
+
+  constructor(
+    protected componentFactoryResolver: ComponentFactoryResolver,
+    protected dynamicFormComponentService: DynamicFormComponentService,
+    protected layoutService: DynamicFormLayoutService,
+    protected validationService: DynamicFormValidationService,
+    protected typeBindRelationService: DsDynamicTypeBindRelationService,
+    protected translateService: TranslateService,
+    protected relationService: DynamicFormRelationService,
+    protected modalService: NgbModal,
+    protected nameVariantService: NameVariantService,
+    protected relationshipService: RelationshipDataService,
+    protected selectableListService: SelectableListService,
+    protected store: Store<AppState>,
+    protected submissionObjectService: SubmissionObjectService,
+    protected ref: ChangeDetectorRef,
+    protected formBuilderService: FormBuilderService,
+    protected submissionService: SubmissionService,
+    protected metadataService: MetadataService,
+    @Inject(APP_CONFIG) protected appConfig: AppConfig,
+    @Inject(DYNAMIC_FORM_CONTROL_MAP_FN) protected dynamicFormControlFn: DynamicFormControlMapFn,
+    private actions$: Actions,
+    protected renderer: Renderer2,
+    @Inject(PLATFORM_ID) protected platformId: string,
+  ) {
+    super(ref, componentFactoryResolver, layoutService, validationService, dynamicFormComponentService, relationService);
+    this.fetchThumbnail = this.appConfig.browseBy.showThumbnails;
+  }
+
+  /**
+   * Sets up the necessary variables for when this control can be used to add relationships to the submitted item
+   */
+  ngOnInit(): void {
+    this.isRelationship = hasValue(this.model.relationship);
+    const isWrapperAroundRelationshipList = hasValue(this.model.relationshipConfig);
+
+    // Subscribe to specified submission actions to announce error messages
+    const errorAnnounceActionsSub = this.actions$.pipe(
+      ofType(
+        SubmissionObjectActionTypes.SAVE_SUBMISSION_FORM_SUCCESS,
+        SubmissionObjectActionTypes.SAVE_SUBMISSION_SECTION_FORM_SUCCESS,
+        SubmissionObjectActionTypes.SAVE_SUBMISSION_FORM_ERROR,
+        SubmissionObjectActionTypes.SAVE_FOR_LATER_SUBMISSION_FORM_ERROR,
+        SubmissionObjectActionTypes.SAVE_SUBMISSION_SECTION_FORM_ERROR,
+      ),
+    ).subscribe(() => this.announceErrorMessages());
+    this.subs.push(errorAnnounceActionsSub);
+
+    if (this.isRelationship || isWrapperAroundRelationshipList) {
+      const config = this.model.relationshipConfig || this.model.relationship;
+      const relationshipOptions = Object.assign(new RelationshipOptions(), config);
+      this.listId = `list-${this.model.submissionId}-${relationshipOptions.relationshipType}`;
+      this.setItem();
+
+      if (isWrapperAroundRelationshipList || !this.model.repeatable) {
+        const subscription = this.selectableListService.getSelectableList(this.listId).pipe(
+          find((list: SelectableListState) => hasNoValue(list)),
+          switchMap(() => this.item$.pipe(take(1))),
+          switchMap((item) => {
+            const relationshipsRD$ = this.relationshipService.getItemRelationshipsByLabel(item,
+              relationshipOptions.relationshipType,
+              undefined,
+              true,
+              true,
+              followLink('leftItem'),
+              followLink('rightItem'),
+              followLink('relationshipType'),
+            );
+            relationshipsRD$.pipe(
+              getFirstSucceededRemoteDataPayload(),
+              getPaginatedListPayload(),
+            ).subscribe((relationships: Relationship[]) => {
+              // set initial namevariants for pre-existing relationships
+              relationships.forEach((relationship: Relationship) => {
+                const relationshipMD: MetadataValue = item.firstMetadata(relationshipOptions.metadataField, { authority: `${VIRTUAL_METADATA_PREFIX}${relationship.id}` });
+                const nameVariantMD: MetadataValue = item.firstMetadata(this.model.metadataFields, { authority: `${VIRTUAL_METADATA_PREFIX}${relationship.id}` });
+                if (hasValue(relationshipMD) && isNotEmpty(relationshipMD.value) && hasValue(nameVariantMD) && isNotEmpty(nameVariantMD.value)) {
+                  this.nameVariantService.setNameVariant(this.listId, relationshipMD.value, nameVariantMD.value);
+                }
+              });
+            });
+
+            return relationshipsRD$.pipe(
+              paginatedRelationsToItems(item.uuid),
+              getFirstSucceededRemoteData(),
+              map((items: RemoteData<PaginatedList<Item>>) => items.payload.page.map((i) => Object.assign(new ItemSearchResult(), { indexableObject: i }))),
+            );
+          }),
+        ).subscribe((relatedItems: SearchResult<Item>[]) => this.selectableListService.select(this.listId, relatedItems));
+        this.subs.push(subscription);
+      }
+
+      if (hasValue(this.model.metadataValue)) {
+        this.value = Object.assign(new FormFieldMetadataValueObject(), this.model.metadataValue);
+      } else {
+        this.value = Object.assign(new FormFieldMetadataValueObject(), this.model.value);
+      }
+
+      if (hasValue(this.value) && this.metadataService.isVirtual(this.value)) {
+        const relationship$ = this.relationshipService.findById(this.metadataService.virtualValue(this.value),
+          true,
+          true,
+          ... itemLinksToFollow(this.fetchThumbnail, this.appConfig.item.showAccessStatuses)).pipe(
+          getAllSucceededRemoteData(),
+          getRemoteDataPayload());
+        this.relationshipValue$ = observableCombineLatest([this.item$.pipe(take(1)), relationship$]).pipe(
+          switchMap(([item, relationship]: [Item, Relationship]) =>
+            relationship.leftItem.pipe(
+              getAllSucceededRemoteData(),
+              getRemoteDataPayload(),
+              map((leftItem: Item) => {
+                return new ReorderableRelationship(relationship, leftItem.uuid !== item.uuid);
+              }),
+            ),
+          ),
+          startWith(undefined),
+        );
+      }
+    }
+
+    if (isNotEmpty(this.model?.value?.securityLevel)) {
+      this.securityLevel = this.model.value.securityLevel;
+    } else if (isNotEmpty(this.model?.metadataValue?.securityLevel)) {
+      this.securityLevel = this.model.metadataValue.securityLevel;
+    } else {
+      this.securityLevel = this.model.securityLevel;
+    }
+  }
+
+  get isCheckbox(): boolean {
+    return this.model.type === DYNAMIC_FORM_CONTROL_TYPE_CHECKBOX || this.model.type === DYNAMIC_FORM_CONTROL_TYPE_CUSTOM_SWITCH;
+  }
+
+
+  get isDateField(): boolean {
+    return this.model.type === DYNAMIC_FORM_CONTROL_TYPE_DSDATEPICKER;
+  }
+
+  ngOnChanges(changes: SimpleChanges) {
+    if (changes && !this.isRelationship && hasValue(this.group.get(this.model.id))) {
+      super.ngOnChanges(changes);
+      if (this.model && this.model.placeholder) {
+        this.model.placeholder = this.translateService.instant(this.model.placeholder);
+      }
+      if (this.model.typeBindRelations && this.model.typeBindRelations.length > 0) {
+        this.subscriptions.push(...this.typeBindRelationService.subscribeRelations(this.model, this.control));
+      }
+    }
+  }
+
+  ngDoCheck() {
+    if (isNotUndefined(this.showErrorMessagesPreviousStage) && this.showErrorMessagesPreviousStage !== this.showErrorMessages) {
+      this.showErrorMessagesPreviousStage = this.showErrorMessages;
+      this.forceShowErrorDetection();
+    }
+  }
+
+  ngAfterViewInit() {
+    this.showErrorMessagesPreviousStage = this.showErrorMessages;
+    this.handleAriaLabelForLibraryComponents();
+  }
+
+  protected createFormControlComponent(): void {
+    super.createFormControlComponent();
+    if (this.componentType !== null) {
+      let index;
+
+      if (this.context && this.context instanceof DynamicFormArrayGroupModel) {
+        index = this.context.index;
+      }
+      const instance = this.dynamicFormComponentService.getFormControlRef(this.model, index);
+      if (instance) {
+        (instance as any).formModel = this.formModel;
+        (instance as any).formGroup = this.formGroup;
+      }
+    }
+  }
+
+  /**
+   * Since Form Control Components created dynamically have 'OnPush' change detection strategy,
+   * changes are not propagated. So use this method to force an update
+   */
+  protected forceShowErrorDetection() {
+    if (this.showErrorMessages) {
+      this.destroyFormControlComponent();
+      this.createFormControlComponent();
+      this.announceErrorMessages();
+    }
+  }
+
+  /**
+   * Announce error messages to the user
+   */
+  announceErrorMessages() {
+    if (!this.liveRegionErrorMessagesShownAlready) {
+      this.liveRegionErrorMessagesShownAlready = true;
+      const numberOfInvalidInputs = this.getNumberOfInvalidInputs() ?? 1;
+      const timeoutMs = numberOfInvalidInputs * 3500;
+      this.errorMessages.forEach((errorMsg) => {
+        // set timer based on the number of the invalid inputs
+        this.liveRegionService.setMessageTimeOutMs(timeoutMs);
+        const message = this.translateService.instant(errorMsg);
+        this.liveRegionService.addMessage(message);
+      });
+      setTimeout(() => {
+        this.liveRegionErrorMessagesShownAlready = false;
+      }, timeoutMs);
+    }
+  }
+
+  /**
+   * Get the number of invalid inputs in the formGroup
+   */
+  private getNumberOfInvalidInputs(): number {
+    if (this.formGroup && this.formGroup.controls) {
+      return Object.values(this.formGroup.controls).filter((control: AbstractControl) => control.invalid).length;
+    }
+  }
+
+  onChangeLanguage(event) {
+    if (isNotEmpty((this.model as any).value)) {
+      this.onChange(event);
+    }
+  }
+
+  hasRelationship() {
+    return isNotEmpty(this.model) && this.model.hasOwnProperty('relationship') && isNotEmpty(this.model.relationship);
+  }
+
+  isVirtual() {
+    const value: FormFieldMetadataValueObject = this.model.metadataValue;
+    return isNotEmpty(value) && value.isVirtual;
+  }
+
+  public hasResultsSelected(): Observable<boolean> {
+    return this.model.value.pipe(map((list: SearchResult<DSpaceObject>[]) => isNotEmpty(list)));
+  }
+
+  /**
+   * Open a modal where the user can select relationships to be added to item being submitted
+   */
+  openLookup() {
+    this.modalRef = this.modalService.open(DsDynamicLookupRelationModalComponent, {
+      size: 'lg',
+    });
+
+    if (hasValue(this.model.value)) {
+      this.focus.emit({
+        $event: new Event('focus'),
+        context: this.context,
+        control: this.control,
+        model: this.model,
+        type: DynamicFormControlEventType.Focus,
+      } as DynamicFormControlEvent);
+
+      this.change.emit({
+        $event: new Event('change'),
+        context: this.context,
+        control: this.control,
+        model: this.model,
+        type: DynamicFormControlEventType.Change,
+      } as DynamicFormControlEvent);
+    }
+
+    this.submissionService.dispatchSave(this.model.submissionId);
+
+    const modalComp = this.modalRef.componentInstance;
+
+    if (hasValue(this.model.value) && !this.model.readOnly) {
+      if (typeof this.model.value === 'string') {
+        modalComp.query = this.model.value;
+      } else if (typeof this.model.value.value === 'string') {
+        modalComp.query = this.model.value.value;
+      }
+    }
+
+    modalComp.repeatable = this.model.repeatable;
+    modalComp.listId = this.listId;
+    modalComp.relationshipOptions = this.model.relationship;
+    modalComp.label = this.model.relationship.relationshipType;
+    modalComp.metadataFields = this.model.metadataFields;
+    modalComp.item = this.item;
+    modalComp.collection = this.collection;
+    modalComp.submissionId = this.model.submissionId;
+  }
+
+  /**
+   * Callback for the remove event,
+   * remove the current control from its array
+   */
+  onRemove(): void {
+    const arrayContext: DynamicFormArrayModel = (this.context as DynamicFormArrayGroupModel).context;
+    const path = this.formBuilderService.getPath(arrayContext);
+    const formArrayControl = this.group.root.get(path) as UntypedFormArray;
+    this.formBuilderService.removeFormArrayGroup(this.context.index, formArrayControl, arrayContext);
+    if (this.model.parent.context.groups.length === 0) {
+      this.formBuilderService.addFormArrayGroup(formArrayControl, arrayContext);
+    }
+  }
+
+  /**
+   * Unsubscribe from all subscriptions
+   */
+  ngOnDestroy(): void {
+    super.ngOnDestroy();
+    this.subs
+      .filter((sub) => hasValue(sub))
+      .forEach((sub) => sub.unsubscribe());
+  }
+
+  get hasHint(): boolean {
+    return isNotEmpty(this.model.hint) && this.model.hint !== '&nbsp;';
+  }
+
+  /**
+   *  Initialize this.item$ based on this.model.submissionId
+   */
+  private setItem() {
+    const submissionObject$ = this.submissionObjectService
+      .findById(this.model.submissionId, true, true, ...SUBMISSION_LINKS_TO_FOLLOW).pipe(
+        getAllSucceededRemoteData(),
+        getRemoteDataPayload(),
+      );
+
+    this.item$ = submissionObject$.pipe(switchMap((submissionObject: SubmissionObject) => (submissionObject.item as Observable<RemoteData<Item>>).pipe(getAllSucceededRemoteData(), getRemoteDataPayload())));
+    const collection$ = submissionObject$.pipe(switchMap((submissionObject: SubmissionObject) => (submissionObject.collection as Observable<RemoteData<Collection>>).pipe(getAllSucceededRemoteData(), getRemoteDataPayload())));
+
+    this.subs.push(this.item$.subscribe((item) => this.item = item));
+    this.subs.push(collection$.subscribe((collection) => this.collection = collection));
+
+  }
+
+  addSecurityLevelToMetadata($event) {
+    this.model.securityLevel = $event;
+    this.securityLevel = $event;
+    if (this.model.parent && (this.model.parent instanceof DynamicConcatModel)) {
+      this.model.parent.securityLevel = $event;
+    }
+    if (this.model.value) {
+      this.model.securityLevel = $event;
+      this.securityLevel = $event;
+      if (this.model.parent && (this.model.parent instanceof DynamicConcatModel)) {
+        this.model.parent.securityLevel = $event;
+      }
+      this.change.emit(
+        {
+          $event: new Event('change'),
+          context: this.context,
+          control: this.control,
+          model: this.model,
+          type: 'changeSecurityLevel',
+        } as DynamicFormControlEvent,
+      );
+      if (this.model.type === 'ONEBOX') {
+        this.customEvent.next({
+          $event: new Event('change'),
+          context: this.context,
+          control: this.control,
+          model: this.model,
+          type: 'changeSecurityLevelGroup',
+        } as DynamicFormControlEvent);
+      }
+    }
+  }
+
+  private handleAriaLabelForLibraryComponents(): void {
+    if (!isPlatformBrowser(this.platformId)) {
+      return;
+    }
+
+    if ((this.componentRef.instance instanceof DynamicFormControlComponent) &&
+      !(this.componentRef.instance instanceof DynamicFormArrayComponent) &&
+      this.componentRef.location.nativeElement) {
+      const inputEl: HTMLElement | null =
+        this.componentRef.location.nativeElement.querySelector('input,textarea,select,[role="textbox"]');
+
+
+      if (inputEl &&  this.model?.additional?.ariaLabel) {
+        this.renderer.setAttribute(inputEl, 'aria-label', this.model.additional.ariaLabel);
+      }
+    }
+  }
+
+  /**
+   * Determines whether a form field should be validated based on its parent group's state.
+   * @returns {boolean} True if the field should be validated, false otherwise
+   */
+  isNotRequiredGroupAndEmpty(): boolean {
+    const parent = this.model.parent;
+    // Check if the model is part of a group, the group needs to be an inner form and be in the submission form not in a nested form.
+    // The check hasValue(parent.parent) tells if the parent is in the submission or in a modal (nested cases)
+    if (hasValue(parent) && parent.type === 'GROUP' && this.model.isModelOfInnerForm && hasValue(parent.parent)) {
+
+      const groupHasSomeValue = parent.group.some(elem => !!elem.value);
+
+      if (!groupHasSomeValue && !parent.isRequired && parent.group?.length > 1) {
+        this.group.reset();
+      }
+
+      return (groupHasSomeValue && !parent.isRequired) || (hasValue(parent.isRequired) && parent.isRequired);
+    } else {
+      return true;
+    }
+  }
+
+  /**
+   * Determines whether the hint should be displayed for the current field.
+   * Hint is shown when:
+   * - The field has a hint
+   * - It's the last element in a repeatable group OR non-repeatable field OR has array group value
+   * - No error messages are currently displayed
+   * @returns {boolean} True if hint should be displayed, false otherwise
+   */
+  shouldShowHint(): boolean {
+    return this.hasHint &&
+      (this.formBuilderService.hasArrayGroupValue(this.model) ||
+        ((!this.model.repeatable && (!(this.model?.isModelOfNotRepeatableGroup) || this.model?.isModelOfNotRepeatableGroup && this.context?.index === this.context?.context?.groups?.length - 1)) && (this.isRelationship === false || this.value?.value === null)) ||
+        (this.model.repeatable === true && this.context?.index === this.context?.context?.groups?.length - 1)) &&
+      (!this.showErrorMessages || this.errorMessages.length === 0);
+  }
+
+  /**
+   * Determines whether error messages should be displayed for the current field.
+   * Error messages are shown when:
+   * - Error messages are not hidden by the model configuration
+   * - There are error messages to show
+   * - For non-repeatable groups: only shown on the last element
+   * - The field passes the required group validation check
+   * @returns {boolean} True if error messages should be displayed, false otherwise
+   */
+  shouldShowErrorMessages(): boolean {
+    return !this.model.hideErrorMessages &&
+      this.showErrorMessages &&
+      (!(this.model?.isModelOfNotRepeatableGroup) ||
+        this.model?.isModelOfNotRepeatableGroup && this.context?.index === this.context?.context?.groups?.length - 1) &&
+      this.isNotRequiredGroupAndEmpty();
+  }
+
+  /**
+   * Determines whether the hint should be displayed for virtual metadata fields.
+   * Hint is shown when:
+   * - The field has a hint
+   * - It's non-repeatable OR the last element in a repeatable group
+   * - No error messages are currently displayed
+   * @returns {boolean} True if hint should be displayed for virtual metadata, false otherwise
+   */
+  shouldShowVirtualMetadataHint(): boolean {
+    return this.hasHint &&
+      (this.model.repeatable === false || this.context?.index === this.context?.context?.groups?.length - 1) &&
+      (!this.showErrorMessages || this.errorMessages.length === 0);
+  }
+
+  /**
+   * Determines whether a clearfix spacer should be displayed after the field.
+   * Clearfix is shown when:
+   * - The parent has multiple groups (more than 1)
+   * - No error messages are currently displayed
+   * @returns {boolean} True if clearfix should be displayed, false otherwise
+   */
+  shouldShowClearfix(): boolean {
+    return this.context?.parent?.groups?.length > 1 &&
+      (!this.showErrorMessages || this.errorMessages.length === 0);
+  }
+}

@@ -1,0 +1,224 @@
+import { Injectable } from '@angular/core';
+import { ConfidenceType } from '@dspace/core/shared/confidence-type';
+import { Metadata } from '@dspace/core/shared/metadata.utils';
+import {
+  dateToISOFormat,
+  dateToString,
+  isNgbDateStruct,
+} from '@dspace/shared/utils/date.util';
+import {
+  hasNoValue,
+  hasValue,
+  isEmpty,
+  isNotEmpty,
+} from '@dspace/shared/utils/empty.util';
+import { Store } from '@ngrx/store';
+
+import { CoreState } from '../../core-state.model';
+import { FormFieldLanguageValueObject } from '../../shared/form/models/form-field-language-value.model';
+import { FormFieldMetadataValueObject } from '../../shared/form/models/form-field-metadata-value.model';
+import { VocabularyEntry } from '../../submission/vocabularies/models/vocabulary-entry.model';
+import {
+  FlushPatchOperationAction,
+  NewPatchAddOperationAction,
+  NewPatchMoveOperationAction,
+  NewPatchRemoveOperationAction,
+  NewPatchReplaceOperationAction,
+} from '../json-patch-operations.actions';
+import { JsonPatchOperationPathObject } from './json-patch-operation-path-combiner';
+
+/**
+ * Provides methods to dispatch JsonPatch Operations Actions
+ */
+@Injectable({ providedIn: 'root' })
+export class JsonPatchOperationsBuilder {
+
+  constructor(private store: Store<CoreState>) {
+  }
+
+  /**
+   * Dispatches a new NewPatchAddOperationAction
+   *
+   * @param path
+   *    a JsonPatchOperationPathObject representing path
+   * @param value
+   *    The value to update the referenced path
+   * @param first
+   *    A boolean representing if the value to be added is the first of an array
+   * @param plain
+   *    A boolean representing if the value to be added is a plain text value
+   * @param languages
+   */
+  add(path: JsonPatchOperationPathObject, value, first = false, plain = false, languages: string[] = null) {
+    this.store.dispatch(
+      new NewPatchAddOperationAction(
+        path.rootElement,
+        path.subRootElement,
+        path.path, this.prepareValue(value, plain, first, null, languages)));
+  }
+
+  /**
+   * Dispatches a new NewPatchReplaceOperationAction
+   *
+   * @param path
+   *    a JsonPatchOperationPathObject representing path
+   * @param value
+   *    the value to update the referenced path
+   * @param plain
+   *    a boolean representing if the value to be added is a plain text value
+   * @param securityLevel
+   * @param language
+   */
+  replace(path: JsonPatchOperationPathObject, value, plain = false, securityLevel = null, language = null) {
+    if (hasNoValue(value) || (typeof value === 'object' && hasNoValue(value.value))) {
+      this.remove(path);
+    } else {
+      this.store.dispatch(
+        new NewPatchReplaceOperationAction(
+          path.rootElement,
+          path.subRootElement,
+          path.path,
+          this.prepareValue(value, plain, false, securityLevel, language)));
+    }
+  }
+
+  /**
+   * Dispatch a new NewPatchMoveOperationAction
+   *
+   * @param path
+   *    the new path tho move to
+   * @param prevPath
+   *    the original path to move from
+   */
+  move(path: JsonPatchOperationPathObject, prevPath: string) {
+    this.store.dispatch(
+      new NewPatchMoveOperationAction(
+        path.rootElement,
+        path.subRootElement,
+        prevPath,
+        path.path,
+      ),
+    );
+  }
+
+  /**
+   * Dispatches a new NewPatchRemoveOperationAction
+   *
+   * @param path
+   *    a JsonPatchOperationPathObject representing path
+   */
+  remove(path: JsonPatchOperationPathObject) {
+    this.store.dispatch(
+      new NewPatchRemoveOperationAction(
+        path.rootElement,
+        path.subRootElement,
+        path.path));
+  }
+
+  /**
+   * Dispatches a new FlushPatchOperationAction
+   *
+   * @param path
+   *    a JsonPatchOperationPathObject representing path
+   */
+  flushOperation(path: JsonPatchOperationPathObject) {
+    this.store.dispatch(
+      new FlushPatchOperationAction(
+        path.rootElement,
+        path.subRootElement,
+        path.path));
+  }
+
+  protected prepareValue(value: any, plain: boolean, first: boolean, securityLevel = null, languages: string[] = null) {
+    let operationValue: any = null;
+    if (hasValue(value)) {
+      if (plain) {
+        operationValue = value;
+      } else {
+        if (Array.isArray(value)) {
+          operationValue = [];
+          value.forEach((entry, index) => {
+            if ((typeof entry === 'object')) {
+              if (isNotEmpty(securityLevel)) {
+                operationValue.push(this.prepareObjectValue(entry, securityLevel));
+              } else {
+                operationValue.push(this.prepareObjectValue(entry));
+              }
+            } else {
+              operationValue.push(new FormFieldMetadataValueObject(entry, languages ? languages[index] : null, securityLevel));
+            }
+          });
+        } else if (typeof value === 'object') {
+          if (isNotEmpty(securityLevel)) {
+            operationValue = this.prepareObjectValue(value, securityLevel);
+          } else {
+            operationValue = this.prepareObjectValue(value);
+          }
+        } else {
+          // add the possibility to add security level when value is string
+          // in this case security level is set on metadata value
+          if (isNotEmpty(securityLevel)) {
+            operationValue = new FormFieldMetadataValueObject(value, null, securityLevel);
+          } else  {
+            operationValue = new FormFieldMetadataValueObject(value, null);
+          }
+
+        }
+      }
+    }
+    return (first && !Array.isArray(operationValue)) ? [operationValue] : operationValue;
+  }
+
+  protected prepareObjectValue(value: any, securityLevel = null) {
+    let operationValue = Object.create({});
+    if (isEmpty(value) || value instanceof FormFieldMetadataValueObject) {
+      if (isNotEmpty(securityLevel)) {
+        operationValue = { ...value, securityLevel: securityLevel };
+      } else {
+        operationValue = value;
+      }
+      //Update confidence if was added once the field was already created, value is set only in constructor of FormFieldMetadataValueObject
+      if (Metadata.hasValidAuthority(operationValue.authority) && (isEmpty(operationValue.confidence) || operationValue.confidence === -1)) {
+        operationValue.confidence = ConfidenceType.CF_ACCEPTED;
+      }
+
+    } else if (value instanceof Date) {
+      if (securityLevel != null) {
+        operationValue = new FormFieldMetadataValueObject(dateToISOFormat(value), null, securityLevel);
+      } else {
+        operationValue = new FormFieldMetadataValueObject(dateToISOFormat(value));
+      }
+    } else if (value instanceof VocabularyEntry) {
+      operationValue = this.prepareAuthorityValue(value, securityLevel);
+    } else if (value instanceof FormFieldLanguageValueObject) {
+      operationValue = new FormFieldMetadataValueObject(value.value, value.language);
+    } else if (value.hasOwnProperty('authority')) {
+      operationValue = new FormFieldMetadataValueObject(value.value, value.language, value.authority);
+    } else if (isNgbDateStruct(value)) {
+      operationValue = new FormFieldMetadataValueObject(dateToString(value));
+    } else if (value.hasOwnProperty('value')) {
+      operationValue = new FormFieldMetadataValueObject(value.value);
+    } else {
+      Object.keys(value)
+        .forEach((key) => {
+          if (typeof value[key] === 'object') {
+            operationValue[key] = this.prepareObjectValue(value[key]);
+          } else {
+            operationValue[key] = value[key];
+          }
+        });
+    }
+    return operationValue;
+  }
+
+  protected prepareAuthorityValue(value: any, securityLevel = null): FormFieldMetadataValueObject {
+    let operationValue: FormFieldMetadataValueObject;
+    if (isNotEmpty(value.authority)) {
+      operationValue = new FormFieldMetadataValueObject(value.value, value.language, securityLevel, value.authority);
+    } else {
+      operationValue = new FormFieldMetadataValueObject(value.value, value.language, securityLevel);
+    }
+    return operationValue;
+  }
+
+}

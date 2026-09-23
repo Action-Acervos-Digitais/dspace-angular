@@ -1,0 +1,67 @@
+
+import {
+  Component,
+  OnInit,
+} from '@angular/core';
+import {
+  ActivatedRoute,
+  NavigationExtras,
+  Router,
+} from '@angular/router';
+import {
+  SortDirection,
+  SortOptions,
+} from '@dspace/core/cache/models/sort-options.model';
+import { ActionType } from '@dspace/core/resource-policy/models/action-type.model';
+import { DSpaceObject } from '@dspace/core/shared/dspace-object.model';
+import { DSpaceObjectType } from '@dspace/core/shared/dspace-object-type.model';
+import { NgbActiveModal } from '@ng-bootstrap/ng-bootstrap';
+import { TranslateModule } from '@ngx-translate/core';
+
+import { environment } from '../../../../../environments/environment';
+import {
+  COLLECTION_PARENT_PARAMETER,
+  getCollectionCreateRoute,
+} from '../../../../collection-page/collection-page-routing-paths';
+import { AuthorizedCommunitySelectorComponent } from '../../dso-selector/authorized-community-selector/authorized-community-selector.component';
+import {
+  DSOSelectorModalWrapperComponent,
+  SelectorActionType,
+} from '../dso-selector-modal-wrapper.component';
+/**
+ * Component to wrap a list of existing communities inside a modal
+ * Used to choose a community from to create a new collection in
+ */
+
+@Component({
+  selector: 'ds-base-create-collection-parent-selector',
+  templateUrl: './create-collection-parent-selector.component.html',
+  imports: [
+    AuthorizedCommunitySelectorComponent,
+    TranslateModule,
+  ],
+})
+export class CreateCollectionParentSelectorComponent extends DSOSelectorModalWrapperComponent implements OnInit {
+  objectType = DSpaceObjectType.COLLECTION;
+  selectorTypes = [DSpaceObjectType.COMMUNITY];
+  action = SelectorActionType.CREATE;
+  rpActionType = ActionType.ADD;
+  header = 'dso-selector.create.collection.sub-level';
+  defaultSort = new SortOptions(environment.comcolSelectionSort.sortField, environment.comcolSelectionSort.sortDirection as SortDirection);
+
+  constructor(protected activeModal: NgbActiveModal, protected route: ActivatedRoute, private router: Router) {
+    super(activeModal, route);
+  }
+
+  /**
+   * Navigate to the collection create page
+   */
+  navigate(dso: DSpaceObject) {
+    const navigationExtras: NavigationExtras = {
+      queryParams: {
+        [COLLECTION_PARENT_PARAMETER]: dso.uuid,
+      },
+    };
+    this.router.navigate([getCollectionCreateRoute()], navigationExtras);
+  }
+}

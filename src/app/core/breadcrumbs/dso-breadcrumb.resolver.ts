@@ -1,0 +1,86 @@
+import {
+  ActivatedRouteSnapshot,
+  RouterStateSnapshot,
+} from '@angular/router';
+import { hasValue } from '@dspace/shared/utils/empty.util';
+import { Observable } from 'rxjs';
+import { map } from 'rxjs/operators';
+
+import { IdentifiableDataService } from '../data/base/identifiable-data.service';
+import { ItemDataService } from '../data/item-data.service';
+import {
+  CUSTOM_URL_VALID_PATTERN,
+  getDSORoute,
+  getItemPageRoute,
+} from '../router/utils/dso-route.utils';
+import { DSpaceObject } from '../shared/dspace-object.model';
+import { FollowLinkConfig } from '../shared/follow-link-config.model';
+import { Item } from '../shared/item.model';
+import {
+  getFirstCompletedRemoteData,
+  getRemoteDataPayload,
+} from '../shared/operators';
+import { DSOBreadcrumbsService } from './dso-breadcrumbs.service';
+import { BreadcrumbConfig } from './models/breadcrumb-config.model';
+
+/**
+ * Method for resolving a breadcrumb config object
+ * @param {ActivatedRouteSnapshot} route The current ActivatedRouteSnapshot
+ * @param {RouterStateSnapshot} state The current RouterStateSnapshot
+ * @param {DSOBreadcrumbsService} breadcrumbService
+ * @param {IdentifiableDataService} dataService
+ * @param linksToFollow
+ * @returns BreadcrumbConfig object
+ */
+export const DSOBreadcrumbResolver: (route: ActivatedRouteSnapshot, state: RouterStateSnapshot, breadcrumbService: DSOBreadcrumbsService, dataService: IdentifiableDataService<DSpaceObject>, ...linksToFollow: FollowLinkConfig<DSpaceObject>[]) => Observable<BreadcrumbConfig<DSpaceObject>> = (
+  route: ActivatedRouteSnapshot,
+  state: RouterStateSnapshot,
+  breadcrumbService: DSOBreadcrumbsService,
+  dataService: IdentifiableDataService<DSpaceObject>,
+  ...linksToFollow: FollowLinkConfig<DSpaceObject>[]
+): Observable<BreadcrumbConfig<DSpaceObject>> => {
+  return DSOBreadcrumbResolverByUuid(route, state, route.params.id, breadcrumbService, dataService, ...linksToFollow);
+};
+
+/**
+ * Method for resolving a breadcrumb config object with the given UUID
+ *
+ * @param {ActivatedRouteSnapshot} route The current ActivatedRouteSnapshot
+ * @param {RouterStateSnapshot} state The current RouterStateSnapshot
+ * @param {String} uuid The uuid of the DSO object
+ * @param {DSOBreadcrumbsService} breadcrumbService
+ * @param {IdentifiableDataService} dataService
+ * @param linksToFollow
+ * @returns BreadcrumbConfig object
+ */
+export const DSOBreadcrumbResolverByUuid: (route: ActivatedRouteSnapshot, state: RouterStateSnapshot, uuid: string, breadcrumbService: DSOBreadcrumbsService, dataService: IdentifiableDataService<DSpaceObject>, ...linksToFollow: FollowLinkConfig<DSpaceObject>[]) => Observable<BreadcrumbConfig<DSpaceObject>> = (
+  route: ActivatedRouteSnapshot,
+  state: RouterStateSnapshot,
+  uuid: string,
+  breadcrumbService: DSOBreadcrumbsService,
+  dataService: IdentifiableDataService<DSpaceObject>,
+  ...linksToFollow: FollowLinkConfig<DSpaceObject>[]
+): Observable<BreadcrumbConfig<DSpaceObject>> => {
+  const isItemDataService = dataService instanceof ItemDataService;
+  const findMethod = isItemDataService ? dataService.findByIdOrCustomUrl.bind(dataService) : dataService.findById.bind(dataService);
+  return findMethod(uuid, true, false, ...linksToFollow).pipe(
+    getFirstCompletedRemoteData(),
+    getRemoteDataPayload(),
+    map((object: DSpaceObject) => {
+      if (hasValue(object)) {
+        // For items, fall back to UUID-based route if the custom URL contains non-latin characters
+        let url: string;
+        if (object instanceof Item && object.hasMetadata('dspace.customurl')) {
+          const customUrl = object.firstMetadataValue('dspace.customurl');
+          const ignoreCustomUrl = !CUSTOM_URL_VALID_PATTERN.test(customUrl);
+          url = getItemPageRoute(object as Item, ignoreCustomUrl);
+        } else {
+          url = getDSORoute(object);
+        }
+        return { provider: breadcrumbService, key: object, url };
+      } else {
+        return undefined;
+      }
+    }),
+  );
+};

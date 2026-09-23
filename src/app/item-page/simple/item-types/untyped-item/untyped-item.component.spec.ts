@@ -1,0 +1,375 @@
+import { HttpClient } from '@angular/common/http';
+import {
+  ChangeDetectionStrategy,
+  NO_ERRORS_SCHEMA,
+} from '@angular/core';
+import {
+  ComponentFixture,
+  fakeAsync,
+  TestBed,
+  tick,
+  waitForAsync,
+} from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
+import { RouterTestingModule } from '@angular/router/testing';
+import { APP_CONFIG } from '@dspace/config/app-config.interface';
+import { BrowseDefinitionDataService } from '@dspace/core/browse/browse-definition-data.service';
+import { RemoteDataBuildService } from '@dspace/core/cache/builders/remote-data-build.service';
+import { ObjectCacheService } from '@dspace/core/cache/object-cache.service';
+import { BitstreamDataService } from '@dspace/core/data/bitstream-data.service';
+import { CommunityDataService } from '@dspace/core/data/community-data.service';
+import { ConfigurationDataService } from '@dspace/core/data/configuration-data.service';
+import { DefaultChangeAnalyzer } from '@dspace/core/data/default-change-analyzer.service';
+import { DSOChangeAnalyzer } from '@dspace/core/data/dso-change-analyzer.service';
+import { ItemDataService } from '@dspace/core/data/item-data.service';
+import { RelationshipDataService } from '@dspace/core/data/relationship-data.service';
+import { RemoteData } from '@dspace/core/data/remote-data';
+import { VersionDataService } from '@dspace/core/data/version-data.service';
+import { VersionHistoryDataService } from '@dspace/core/data/version-history-data.service';
+import { NotificationsService } from '@dspace/core/notification-system/notifications.service';
+import { RouteService } from '@dspace/core/services/route.service';
+import { Bitstream } from '@dspace/core/shared/bitstream.model';
+import { HALEndpointService } from '@dspace/core/shared/hal-endpoint.service';
+import { Item } from '@dspace/core/shared/item.model';
+import { MetadataMap } from '@dspace/core/shared/metadata.models';
+import { UUIDService } from '@dspace/core/shared/uuid.service';
+import { WorkspaceitemDataService } from '@dspace/core/submission/workspaceitem-data.service';
+import { BrowseDefinitionDataServiceStub } from '@dspace/core/testing/browse-definition-data-service.stub';
+import { ConfigurationDataServiceStub } from '@dspace/core/testing/configuration-data.service.stub';
+import { mockTruncatableService } from '@dspace/core/testing/mock-trucatable.service';
+import { TranslateLoaderMock } from '@dspace/core/testing/translate-loader.mock';
+import { createPaginatedList } from '@dspace/core/testing/utils.test';
+import { createSuccessfulRemoteDataObject$ } from '@dspace/core/utilities/remote-data.utils';
+import { Store } from '@ngrx/store';
+import {
+  TranslateLoader,
+  TranslateModule,
+} from '@ngx-translate/core';
+import {
+  Observable,
+  of,
+} from 'rxjs';
+
+import { environment } from '../../../../../environments/environment.test';
+import { DsoEditMenuComponent } from '../../../../shared/dso-page/dso-edit-menu/dso-edit-menu.component';
+import { MetadataFieldWrapperComponent } from '../../../../shared/metadata-field-wrapper/metadata-field-wrapper.component';
+import { ThemedResultsBackButtonComponent } from '../../../../shared/results-back-button/themed-results-back-button.component';
+import { SearchService } from '../../../../shared/search/search.service';
+import { TruncatableService } from '../../../../shared/truncatable/truncatable.service';
+import { TruncatePipe } from '../../../../shared/utils/truncate.pipe';
+import { ThemedThumbnailComponent } from '../../../../thumbnail/themed-thumbnail.component';
+import { CollectionsComponent } from '../../../field-components/collections/collections.component';
+import { ThemedMediaViewerComponent } from '../../../media-viewer/themed-media-viewer.component';
+import { MiradorViewerComponent } from '../../../mirador-viewer/mirador-viewer.component';
+import { ItemVersionsSharedService } from '../../../versions/item-versions-shared.service';
+import { ThemedFileSectionComponent } from '../../field-components/file-section/themed-file-section.component';
+import { ItemPageAbstractFieldComponent } from '../../field-components/specific-field/abstract/item-page-abstract-field.component';
+import { ItemPageDateFieldComponent } from '../../field-components/specific-field/date/item-page-date-field.component';
+import { GenericItemPageFieldComponent } from '../../field-components/specific-field/generic/generic-item-page-field.component';
+import { ThemedItemPageTitleFieldComponent } from '../../field-components/specific-field/title/themed-item-page-field.component';
+import { ItemPageUriFieldComponent } from '../../field-components/specific-field/uri/item-page-uri-field.component';
+import { ThemedMetadataRepresentationListComponent } from '../../metadata-representation-list/themed-metadata-representation-list.component';
+import {
+  createRelationshipsObservable,
+  getIIIFEnabled,
+  getIIIFSearchEnabled,
+  mockRouteService,
+} from '../shared/item.component.spec';
+import { UntypedItemComponent } from './untyped-item.component';
+
+const noMetadata = new MetadataMap();
+
+function getItem(metadata: MetadataMap) {
+  return Object.assign(new Item(), {
+    bundles: createSuccessfulRemoteDataObject$(createPaginatedList([])),
+    metadata: metadata,
+    relationships: createRelationshipsObservable(),
+  });
+}
+
+describe('UntypedItemComponent', () => {
+  let comp: UntypedItemComponent;
+  let fixture: ComponentFixture<UntypedItemComponent>;
+  let configurationDataService = new ConfigurationDataServiceStub();
+
+  beforeEach(waitForAsync(() => {
+    const mockBitstreamDataService = {
+      getThumbnailFor(item: Item): Observable<RemoteData<Bitstream>> {
+        return createSuccessfulRemoteDataObject$(new Bitstream());
+      },
+      findPrimaryBitstreamByItemAndName(item: Item, bundleName: string, useCachedVersionIfAvailable: boolean, reRequestOnStale: boolean): Observable<Bitstream | null> {
+        return of(null);
+      },
+      findAllByItemAndBundleName(item: Item, bundleName: string, options: any, useCachedVersionIfAvailable: boolean, reRequestOnStale: boolean, ...linksToFollow: any[]): Observable<RemoteData<any>> {
+        return createSuccessfulRemoteDataObject$(createPaginatedList([]));
+      },
+    };
+    TestBed.configureTestingModule({
+      imports: [
+        TranslateModule.forRoot({
+          loader: {
+            provide: TranslateLoader,
+            useClass: TranslateLoaderMock,
+          },
+        }),
+        RouterTestingModule,
+        GenericItemPageFieldComponent, TruncatePipe,
+        UntypedItemComponent,
+      ],
+      providers: [
+        { provide: ItemDataService, useValue: {} },
+        { provide: TruncatableService, useValue: mockTruncatableService },
+        { provide: RelationshipDataService, useValue: {} },
+        { provide: ObjectCacheService, useValue: {} },
+        { provide: UUIDService, useValue: {} },
+        { provide: Store, useValue: {} },
+        { provide: RemoteDataBuildService, useValue: {} },
+        { provide: CommunityDataService, useValue: {} },
+        { provide: HALEndpointService, useValue: {} },
+        { provide: NotificationsService, useValue: {} },
+        { provide: HttpClient, useValue: {} },
+        { provide: DSOChangeAnalyzer, useValue: {} },
+        { provide: DefaultChangeAnalyzer, useValue: {} },
+        { provide: VersionHistoryDataService, useValue: {} },
+        { provide: VersionDataService, useValue: {} },
+        { provide: BitstreamDataService, useValue: mockBitstreamDataService },
+        { provide: WorkspaceitemDataService, useValue: {} },
+        { provide: SearchService, useValue: {} },
+        { provide: ItemDataService, useValue: {} },
+        { provide: ItemVersionsSharedService, useValue: {} },
+        { provide: RouteService, useValue: mockRouteService },
+        { provide: BrowseDefinitionDataService, useValue: BrowseDefinitionDataServiceStub },
+        { provide: ConfigurationDataService, useValue: new ConfigurationDataServiceStub() },
+        { provide: ConfigurationDataService, useValue: configurationDataService },
+        { provide: APP_CONFIG, useValue: environment },
+      ],
+      schemas: [NO_ERRORS_SCHEMA],
+    }).overrideComponent(UntypedItemComponent, {
+      add: { changeDetection: ChangeDetectionStrategy.Default },
+      remove: {
+        imports: [
+          ThemedResultsBackButtonComponent,
+          MiradorViewerComponent,
+          ThemedItemPageTitleFieldComponent,
+          DsoEditMenuComponent,
+          MetadataFieldWrapperComponent,
+          ThemedThumbnailComponent,
+          ThemedMediaViewerComponent,
+          ThemedFileSectionComponent,
+          ItemPageDateFieldComponent,
+          ThemedMetadataRepresentationListComponent,
+          GenericItemPageFieldComponent,
+          ItemPageAbstractFieldComponent,
+          ItemPageUriFieldComponent,
+          CollectionsComponent,
+        ],
+      },
+    });
+  }));
+
+  describe('default view', () => {
+    beforeEach(waitForAsync(() => {
+      TestBed.compileComponents();
+      fixture = TestBed.createComponent(UntypedItemComponent);
+      comp = fixture.componentInstance;
+      comp.object = getItem(noMetadata);
+      fixture.detectChanges();
+    }));
+
+    it('should contain a component to display the date', () => {
+      const fields = fixture.debugElement.queryAll(By.css('ds-item-page-date-field'));
+      expect(fields.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('should not contain a metadata only author field', () => {
+      const fields = fixture.debugElement.queryAll(By.css('ds-item-page-author-field'));
+      expect(fields.length).toBe(0);
+    });
+
+    it('should contain a mixed metadata and relationship field for authors', () => {
+      const fields = fixture.debugElement.queryAll(By.css('.ds-item-page-mixed-author-field'));
+      expect(fields.length).toBe(1);
+    });
+
+    it('should contain a component to display the abstract', () => {
+      const fields = fixture.debugElement.queryAll(By.css('ds-item-page-abstract-field'));
+      expect(fields.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('should contain a component to display the uri', () => {
+      const fields = fixture.debugElement.queryAll(By.css('ds-item-page-uri-field'));
+      expect(fields.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('should contain a component to display the collections', () => {
+      const fields = fixture.debugElement.queryAll(By.css('ds-item-page-collections'));
+      expect(fields.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('should not contain an iiif viewer component', () => {
+      const fields = fixture.debugElement.queryAll(By.css('ds-mirador-viewer'));
+      expect(fields.length).toBe(0);
+    });
+  });
+
+
+  describe('with IIIF viewer', () => {
+
+    beforeEach(waitForAsync(() => {
+      const iiifEnabledMap: MetadataMap = {
+        'dspace.iiif.enabled': [getIIIFEnabled(true)],
+        'iiif.search.enabled': [getIIIFSearchEnabled(false)],
+      };
+      TestBed.compileComponents();
+      fixture = TestBed.createComponent(UntypedItemComponent);
+      comp = fixture.componentInstance;
+      comp.object = getItem(iiifEnabledMap);
+      fixture.detectChanges();
+    }));
+
+    it('should contain an iiif viewer component', () => {
+      const fields = fixture.debugElement.queryAll(By.css('ds-mirador-viewer'));
+      expect(fields.length).toBeGreaterThanOrEqual(1);
+    });
+    it('should not retrieve the query term for previous route', (): void => {
+      expect(comp.iiifQuery$).toBeFalsy();
+    });
+
+  });
+
+  describe('with IIIF viewer and search', () => {
+    const localMockRouteService = {
+      getPreviousUrl(): Observable<string> {
+        return of('/search?query=test%20query&fakeParam=true');
+      },
+      storeUrlInSession(key: string, url: string): void {
+        // no-op
+      },
+      getUrlFromSession(key: string): string | null {
+        return null;
+      },
+    };
+    beforeEach(waitForAsync(() => {
+      const iiifEnabledMap: MetadataMap = {
+        'dspace.iiif.enabled': [getIIIFEnabled(true)],
+        'iiif.search.enabled': [getIIIFSearchEnabled(true)],
+      };
+      TestBed.overrideProvider(RouteService, { useValue: localMockRouteService });
+      TestBed.compileComponents();
+      fixture = TestBed.createComponent(UntypedItemComponent);
+      spyOn(localMockRouteService, 'getPreviousUrl').and.callThrough();
+      comp = fixture.componentInstance;
+      comp.object = getItem(iiifEnabledMap);
+      fixture.detectChanges();
+    }));
+
+    it('should contain an iiif viewer component', () => {
+      const fields = fixture.debugElement.queryAll(By.css('ds-mirador-viewer'));
+      expect(fields.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('should retrieve the query term for previous route', (): void => {
+      expect(comp.iiifQuery$.subscribe(result => expect(result).toEqual('test query')));
+    });
+  });
+
+  describe('with IIIF viewer and search but no previous search query', () => {
+
+    const localMockRouteService = {
+      getPreviousUrl(): Observable<string> {
+        return of('/item');
+      },
+      storeUrlInSession(key: string, url: string): void {
+        // no-op
+      },
+      getUrlFromSession(key: string): string | null {
+        return null;
+      },
+    };
+    beforeEach(waitForAsync(() => {
+      const iiifEnabledMap: MetadataMap = {
+        'dspace.iiif.enabled': [getIIIFEnabled(true)],
+        'iiif.search.enabled': [getIIIFSearchEnabled(true)],
+      };
+      TestBed.overrideProvider(RouteService, { useValue: localMockRouteService });
+      TestBed.compileComponents();
+      fixture = TestBed.createComponent(UntypedItemComponent);
+
+      comp = fixture.componentInstance;
+      comp.object = getItem(iiifEnabledMap);
+      fixture.detectChanges();
+    }));
+
+    it('should contain an iiif viewer component', () => {
+      const fields = fixture.debugElement.queryAll(By.css('ds-mirador-viewer'));
+      expect(fields.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('should not retrieve the query term for previous route', fakeAsync(() => {
+      let emitted;
+      comp.iiifQuery$.subscribe(result => emitted = result);
+      tick(10);
+      expect(emitted).toBeUndefined();
+    }));
+
+  });
+
+  describe('when showDownloadLinkAsAttachment is false', () => {
+    beforeEach(waitForAsync(() => {
+      TestBed.overrideComponent(UntypedItemComponent, {
+        add: { changeDetection: ChangeDetectionStrategy.Default },
+        remove: {
+          imports: [
+            ThemedFileSectionComponent,
+          ],
+        },
+      });
+      TestBed.compileComponents();
+      fixture = TestBed.createComponent(UntypedItemComponent);
+      comp = fixture.componentInstance;
+      comp.object = getItem(noMetadata);
+      comp.showDownloadLinkAsAttachment = false;
+      fixture.detectChanges();
+    }));
+
+    it('should display the file section component', () => {
+      const fileSectionElements = fixture.debugElement.queryAll(By.css('ds-item-page-file-section'));
+      expect(fileSectionElements.length).toBe(1);
+    });
+
+    it('should not display the attachment section component', () => {
+      const attachmentSectionElements = fixture.debugElement.queryAll(By.css('ds-item-page-attachment-section'));
+      expect(attachmentSectionElements.length).toBe(0);
+    });
+  });
+
+  describe('when showDownloadLinkAsAttachment is true', () => {
+    beforeEach(waitForAsync(() => {
+      TestBed.overrideComponent(UntypedItemComponent, {
+        add: { changeDetection: ChangeDetectionStrategy.Default },
+        remove: {
+          imports: [
+            ThemedFileSectionComponent,
+          ],
+        },
+      });
+      TestBed.compileComponents();
+      fixture = TestBed.createComponent(UntypedItemComponent);
+      comp = fixture.componentInstance;
+      comp.object = getItem(noMetadata);
+      comp.showDownloadLinkAsAttachment = true;
+      fixture.detectChanges();
+    }));
+
+    it('should display the attachment section component', () => {
+      const attachmentSectionElements = fixture.debugElement.queryAll(By.css('ds-item-page-attachment-section'));
+      expect(attachmentSectionElements.length).toBe(1);
+    });
+
+    it('should not display the file section component', () => {
+      const fileSectionElements = fixture.debugElement.queryAll(By.css('ds-item-page-file-section'));
+      expect(fileSectionElements.length).toBe(0);
+    });
+  });
+
+});

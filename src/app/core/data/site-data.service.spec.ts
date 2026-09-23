@@ -1,0 +1,128 @@
+import {
+  cold,
+  getTestScheduler,
+} from 'jasmine-marbles';
+import { TestScheduler } from 'rxjs/testing';
+
+import { RemoteDataBuildService } from '../cache/builders/remote-data-build.service';
+import { RequestParam } from '../cache/models/request-param.model';
+import { ObjectCacheService } from '../cache/object-cache.service';
+import { HALEndpointService } from '../shared/hal-endpoint.service';
+import { Site } from '../shared/site.model';
+import { createPaginatedList } from '../testing/utils.test';
+import {
+  createFailedRemoteDataObject,
+  createSuccessfulRemoteDataObject,
+} from '../utilities/remote-data.utils';
+import { testFindAllDataImplementation } from './base/find-all-data.spec';
+import { DefaultChangeAnalyzer } from './default-change-analyzer.service';
+import { FindListOptions } from './find-list-options.model';
+import { RequestService } from './request.service';
+import { SiteDataService } from './site-data.service';
+
+describe('SiteDataService', () => {
+  let scheduler: TestScheduler;
+  let service: SiteDataService;
+  let halService: HALEndpointService;
+  let requestService: RequestService;
+  let rdbService: RemoteDataBuildService;
+  let objectCache: ObjectCacheService;
+  let comparator: DefaultChangeAnalyzer<Site>;
+
+  const testObject = Object.assign(new Site(), {
+    uuid: '9b4f22f4-164a-49db-8817-3316b6ee5746',
+  });
+
+  const requestUUID = '34cfed7c-f597-49ef-9cbe-ea351f0023c2';
+  const options = Object.assign(new FindListOptions(), {});
+
+  const siteLink = 'https://rest.api/rest/api/config/sites';
+
+  beforeEach(() => {
+    scheduler = getTestScheduler();
+
+    halService = jasmine.createSpyObj('halService', {
+      getEndpoint: cold('a', { a: siteLink }),
+    });
+    requestService = jasmine.createSpyObj('requestService', {
+      generateRequestId: requestUUID,
+      send: true,
+    });
+    rdbService = jasmine.createSpyObj('rdbService', {
+      buildList: cold('a', {
+        a: createSuccessfulRemoteDataObject(createPaginatedList([testObject])),
+      }),
+    });
+
+    objectCache = {} as ObjectCacheService;
+
+    service = new SiteDataService(
+      requestService,
+      rdbService,
+      objectCache,
+      halService,
+      comparator,
+    );
+  });
+
+  describe('composition', () => {
+    const initService = () => new SiteDataService(null, null, null, null, null);
+
+    testFindAllDataImplementation(initService);
+  });
+
+  describe('getBrowseEndpoint', () => {
+    it('should return the Static Page endpoint', () => {
+
+      const result = service.getBrowseEndpoint(options);
+      const expected = cold('b', { b: siteLink });
+
+      expect(result).toBeObservable(expected);
+    });
+  });
+
+  describe('find', () => {
+    it('should call findAll with allLanguages projection searchParam and return the first Site object', () => {
+      const findAllSpy = spyOn(service, 'findAll').and.returnValue(cold('a', {
+        a: createSuccessfulRemoteDataObject(createPaginatedList([testObject])),
+      }));
+
+      const result = service.find(options);
+      const expected = cold('(b|)', { b: testObject });
+
+      expect(result).toBeObservable(expected);
+
+      const calledOptions: FindListOptions = findAllSpy.calls.mostRecent().args[0];
+      const projectionParam = calledOptions.searchParams?.find((p: RequestParam) => p.fieldName === 'projection');
+      expect(projectionParam).toBeDefined();
+      expect(projectionParam.fieldValue).toBe('allLanguages');
+    });
+
+    it('should fall back to findAll without searchParams when first call fails, and return the Site object', () => {
+      const findAllSpy = spyOn(service, 'findAll').and.returnValues(
+        cold('a', { a: createFailedRemoteDataObject<any>('Error', 500) }),
+        cold('b', { b: createSuccessfulRemoteDataObject(createPaginatedList([testObject])) }),
+      );
+
+      const result = service.find(options);
+      const expected = cold('(b|)', { b: testObject });
+
+      expect(result).toBeObservable(expected);
+
+      // Second call should use original options (without injected searchParams)
+      const fallbackOptions: FindListOptions = findAllSpy.calls.argsFor(1)[0];
+      expect(fallbackOptions).toEqual(options);
+    });
+
+    it('should return null when both findAll calls fail', () => {
+      spyOn(service, 'findAll').and.returnValue(
+        cold('a', { a: createFailedRemoteDataObject<any>('Error', 500) }),
+      );
+
+      const result = service.find(options);
+      const expected = cold('(b|)', { b: null });
+
+      expect(result).toBeObservable(expected);
+    });
+  });
+});

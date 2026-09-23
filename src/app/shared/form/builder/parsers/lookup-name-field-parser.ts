@@ -1,0 +1,23 @@
+import { FormFieldMetadataValueObject } from '@dspace/core/shared/form/models/form-field-metadata-value.model';
+
+import {
+  DynamicLookupNameModel,
+  DynamicLookupNameModelConfig,
+} from '../ds-dynamic-form-ui/models/lookup/dynamic-lookup-name.model';
+import { FieldParser } from './field-parser';
+
+export class LookupNameFieldParser extends FieldParser {
+
+  public modelFactory(fieldValue?: FormFieldMetadataValueObject, label?: boolean): any {
+    if (this.configData.selectableMetadata[0].controlledVocabulary) {
+      const lookupModelConfig: DynamicLookupNameModelConfig = this.initModel(null, label);
+
+      this.setVocabularyOptions(lookupModelConfig, this.parserOptions.collectionUUID);
+
+      this.setValues(lookupModelConfig, fieldValue, true);
+
+      return new DynamicLookupNameModel(lookupModelConfig);
+    }
+  }
+
+}

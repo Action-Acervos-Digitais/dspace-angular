@@ -1,0 +1,112 @@
+/**
+ * The contents of this file are subject to the license and copyright
+ * detailed in the LICENSE and NOTICE files at the root of the source
+ * tree and available online at
+ *
+ * http://www.dspace.org/license/
+ */
+import { isPlatformBrowser } from '@angular/common';
+import {
+  Inject,
+  Injectable,
+  PLATFORM_ID,
+} from '@angular/core';
+import { AuthService } from '@dspace/core/auth/auth.service';
+import { AuthorizationDataService } from '@dspace/core/data/feature-authorization/authorization-data.service';
+import { FeatureID } from '@dspace/core/data/feature-authorization/feature-id';
+import { SubscriptionsDataService } from '@dspace/core/data/subscriptions-data.service';
+import { DSpaceObject } from '@dspace/core/shared/dspace-object.model';
+import { NgbModal } from '@ng-bootstrap/ng-bootstrap';
+import { TranslateService } from '@ngx-translate/core';
+import {
+  combineLatest,
+  Observable,
+  of,
+  Subject,
+} from 'rxjs';
+import {
+  catchError,
+  first,
+  map,
+  startWith,
+  switchMap,
+} from 'rxjs/operators';
+
+import { SubscriptionModalComponent } from '../../subscriptions/subscription-modal/subscription-modal.component';
+import { OnClickMenuItemModel } from '../menu-item/models/onclick.model';
+import { MenuItemType } from '../menu-item-type.model';
+import { PartialMenuSection } from '../menu-provider.model';
+import { DSpaceObjectPageMenuProvider } from './helper-providers/dso.menu';
+
+/**
+ * Menu provider to create the "Subscribe" option in the DSO edit menu
+ */
+@Injectable()
+export class SubscribeMenuProvider extends DSpaceObjectPageMenuProvider {
+  private refresh$ = new Subject<void>();
+
+  constructor(
+    protected authService: AuthService,
+    protected authorizationService: AuthorizationDataService,
+    protected subscriptionService: SubscriptionsDataService,
+    protected modalService: NgbModal,
+    protected translateService: TranslateService,
+    @Inject(PLATFORM_ID) private platformId: unknown,
+  ) {
+    super();
+  }
+
+  public getSectionsForContext(dso: DSpaceObject): Observable<PartialMenuSection[]> {
+    if (!isPlatformBrowser(this.platformId)) {
+      return of([]);
+    }
+    const sectionId = `subscribe-btn-${dso.uuid}`;
+
+    return this.refresh$.pipe(
+      startWith(null),
+      switchMap(() => combineLatest([
+        this.authorizationService.isAuthorized(FeatureID.CanSubscribe, dso.self),
+        this.authService.getAuthenticatedUserFromStore().pipe(first()),
+      ])),
+      switchMap(([canSubscribe, user]) => {
+        const baseSection = {
+          id: sectionId,
+          visible: false,
+          model: null,
+        } as PartialMenuSection;
+
+        if (!canSubscribe || !user) {
+          return of([baseSection]);
+        }
+
+        const openModal = () => {
+          const modalRef = this.modalService.open(SubscriptionModalComponent);
+          modalRef.componentInstance.dso = dso;
+          modalRef.componentInstance.updated.subscribe(() => this.refresh$.next());
+        };
+
+        return this.subscriptionService.getSubscriptionsByPersonDSO(user.id, dso.uuid).pipe(
+          map(rd => {
+            const subscription = rd.payload?.page?.[0];
+            return [{
+              ...baseSection,
+              visible: true,
+              model: {
+                type: MenuItemType.ONCLICK,
+                text: subscription ? 'subscriptions.manage' : 'subscriptions.tooltip',
+                function: openModal,
+              } as OnClickMenuItemModel,
+              icon: 'bell',
+            }];
+          }),
+          catchError(() => of([baseSection])),
+        );
+      }),
+      startWith([{
+        id: sectionId,
+        visible: false,
+        model: null,
+      } as PartialMenuSection]),
+    );
+  }
+}
